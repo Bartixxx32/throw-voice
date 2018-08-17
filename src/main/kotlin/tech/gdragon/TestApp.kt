@@ -1,7 +1,12 @@
 package tech.gdragon
 
+import com.squareup.tape.FileObjectQueue
+import com.squareup.tape.ObjectQueue
+import de.sciss.jump3r.lowlevel.LameEncoder
+import de.sciss.jump3r.mp3.Lame
 import net.dv8tion.jda.core.AccountType
 import net.dv8tion.jda.core.JDABuilder
+import net.dv8tion.jda.core.audio.AudioReceiveHandler
 import net.dv8tion.jda.core.events.guild.voice.GuildVoiceJoinEvent
 import net.dv8tion.jda.core.events.guild.voice.GuildVoiceLeaveEvent
 import net.dv8tion.jda.core.hooks.ListenerAdapter
@@ -15,7 +20,11 @@ import tech.gdragon.db.dao.Alias
 import tech.gdragon.db.dao.Channel
 import tech.gdragon.db.dao.Guild
 import tech.gdragon.db.table.Tables
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.nio.file.Files
 import java.sql.Connection
+
 
 fun dropAllTables() {
   val database = "settings.db"
@@ -110,15 +119,57 @@ fun testAutoJoin() {
 
     settings
       ?.channels
-      ?.firstOrNull{ it.id.value == 41992802040138956L }
+      ?.firstOrNull { it.id.value == 41992802040138956L }
       ?.let { println(it.id.value) }
   }
 }
 
+fun encodePcmToMp3(pcm: ByteArray): ByteArray {
+  val encoder = LameEncoder(AudioReceiveHandler.OUTPUT_FORMAT, 128, LameEncoder.CHANNEL_MODE_AUTO, LameEncoder.QUALITY_HIGH, true)
+
+  val mp3 = ByteArrayOutputStream()
+//  val buffer = ByteArray(pcm.size)
+  val buffer = ByteArray(encoder.pcmBufferSize)
+
+  var bytesToTransfer = Math.min(buffer.size, pcm.size)
+  var bytesWritten = 0
+  var currentPcmPosition = 0
+
+  try {
+    do {
+      bytesWritten = encoder.encodeBuffer(pcm, currentPcmPosition, bytesToTransfer, buffer)
+      currentPcmPosition += bytesToTransfer
+      println("pcm.size - currentPcmPosition = ${pcm.size - currentPcmPosition}")
+
+      bytesToTransfer = Math.min(buffer.size, pcm.size - currentPcmPosition)
+
+      mp3.write(buffer, 0, bytesWritten)
+      println("currentPcmPosition = $currentPcmPosition")
+      println("bytesWritten = $bytesWritten")
+      println("bytesToTransfer = $bytesToTransfer")
+    } while (0 < bytesWritten)
+  } catch (e: IllegalArgumentException) {
+    println(e.message)
+  } finally {
+    encoder.close()
+  }
+
+  return mp3.toByteArray()
+}
+
+/**
+ *
+ */
 fun main(args: Array<String>) {
 //  testAlerts()
 //  basicTest()
 //  dropAllTables()
 //  uploadRecording()
-  testAutoJoin()
+//  testAutoJoin()
+
+//  val queue = FileObjectQueue()
+  val pcm = Files.readAllBytes(File("data/test-data/silence/8da0f5ee-e9c6-48d9-9b4b-56efc83709b3.pcm").toPath())
+  val mp3 = encodePcmToMp3(pcm)
+
+  Files.write(File("data/test-data/silence/8da0f5ee-e9c6-48d9-9b4b-56efc83709b3-vbr-java.mp3").toPath(), mp3)
 }

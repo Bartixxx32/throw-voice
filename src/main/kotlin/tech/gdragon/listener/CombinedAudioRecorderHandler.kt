@@ -29,7 +29,7 @@ import kotlin.concurrent.thread
 
 class CombinedAudioRecorderHandler(val volume: Double, val voiceChannel: VoiceChannel, val defaultChannel: MessageChannel) : AudioReceiveHandler {
   companion object {
-    private const val AFK_LIMIT = (2 * 60 * 1000) / 20                      // 2 minutes in ms over 20ms increments
+    private const val AFK_LIMIT = (30 * 1000) / 20                      // 2 minutes in ms over 20ms increments
     private const val MAX_RECORDING_MB = 110
     private const val MAX_RECORDING_SIZE = MAX_RECORDING_MB * 1024 * 1024   // 8MB
     private const val BUFFER_TIMEOUT = 200L                                 // 200 milliseconds
@@ -102,7 +102,7 @@ class CombinedAudioRecorderHandler(val volume: Double, val voiceChannel: VoiceCh
   private fun createRecording(): Disposable? {
     subject = PublishSubject.create()
     uuid = UUID.randomUUID()
-    filename = "$dataDirectory/recordings/$uuid.mp3"
+    filename = "$dataDirectory/recordings/$uuid.pcm"
     queueFilename = "$dataDirectory/recordings/$uuid.queue"
     queueFile = QueueFile(File(queueFilename))
     canReceive = true
@@ -112,19 +112,24 @@ class CombinedAudioRecorderHandler(val volume: Double, val voiceChannel: VoiceCh
     logger.info("{}#{}: Creating recording file - {}", voiceChannel.guild.name, voiceChannel.name, queueFilename)
     return subject
       ?.map { it.getAudioData(volume) }
-      ?.buffer(BUFFER_TIMEOUT, TimeUnit.MILLISECONDS, BUFFER_MAX_COUNT)
-      ?.flatMap({ bytesArray ->
+      ?.buffer(BUFFER_TIMEOUT, TimeUnit.MILLISECONDS, BUFFER_MAX_COUNT) // size of this buffer should be a pcmSized buffer
+      ?.flatMap { bytesArray ->
         val baos = ByteArrayOutputStream()
 
-        bytesArray.forEach {
-          val buffer = ByteArray(it.size)
-          val bytesEncoded = encoder.encodeBuffer(it, 0, it.size, buffer)
-          baos.write(buffer, 0, bytesEncoded)
+        val size = bytesArray.fold(0) {acc, bytes -> acc + bytes.size }
+        val buffer = ByteArray(size)
+
+        var index = 0
+        bytesArray.forEach { ba ->
+          ba.forEach {
+            buffer[index++] = it
+          }
         }
 
-        Observable.fromArray(baos.toByteArray())
-      })
-      ?.collectInto(queueFile!!, { queue, bytes ->
+//        Observable.fromArray(baos.toByteArray())
+        Observable.fromArray(buffer)
+      }
+      ?.collectInto(queueFile!!) { queue, bytes ->
 
         while (recordingSize + bytes.size > MAX_RECORDING_SIZE) {
           recordingSize -= queue.peek()?.size ?: 0
@@ -132,12 +137,12 @@ class CombinedAudioRecorderHandler(val volume: Double, val voiceChannel: VoiceCh
         }
         queue.add(bytes)
         recordingSize += bytes.size
-      })
-      ?.subscribe({ _, e ->
+      }
+      ?.subscribe { _, e ->
         e?.let {
-          logger.error("An error occurred in the recording pipeline.", it)
+          logger.error("An error occurred in the recording pipeline. Reason: ${it.message}", it)
         }
-      })
+      }
   }
 
   fun saveRecording(voiceChannel: VoiceChannel?, textChannel: TextChannel?) {
@@ -152,9 +157,9 @@ class CombinedAudioRecorderHandler(val volume: Double, val voiceChannel: VoiceCh
           stream.transferTo(it)
         })
 
-        clear()
+//        clear()
         close()
-        File(queueFilename).delete()
+        //File(queueFilename).delete()
       }
     }
 
@@ -234,7 +239,7 @@ class CombinedAudioRecorderHandler(val volume: Double, val voiceChannel: VoiceCh
 
         BotUtils.sendMessage(channel, message)
 
-        cleanup(recording)
+        // cleanup(recording)
       } else {
         logger.warn("B2 Bucket ID not set.")
       }
